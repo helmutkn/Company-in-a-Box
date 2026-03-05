@@ -1,245 +1,714 @@
-# nanobot – Entwicklungsplan
+# Company in a Box – Entwicklungsplan
 
-> Stand: 5. März 2026 · Branch: `cursor/neuer-plan-f015` · Version: 0.1.4.post3
-
----
-
-## Zusammenfassung
-
-nanobot ist ein ultra-leichtgewichtiger KI-Assistent (~4.000 Zeilen Kerncode) mit Multi-Channel-Support, LLM-Integration über LiteLLM und einem Skills-System. Dieses Dokument beschreibt den Entwicklungsplan für die nächsten Iterationen – aufgeteilt in vier Phasen, priorisiert nach Auswirkung und Aufwand.
+> Stand: 5. März 2026 · Branch: `cursor/neuer-plan-f015`
 
 ---
 
-## Phase 1 – Stabilisierung & Qualität (Kurzfristig)
+## Vision
 
-Fokus: Bestehende Bugs beheben, Testabdeckung erhöhen, Code-Konsistenz verbessern.
+**Eine komplette Firma, die auf KI-Agenten-Teams aufbaut und auf einem einzigen Rechner (Box) läuft.**
 
-### 1.1 Schema- und Konfigurationsfixes
-
-| Aufgabe | Dateien | Beschreibung |
-|---------|---------|--------------|
-| Doppelte `MatrixConfig` entfernen | `nanobot/config/schema.py` | Zwei identische `MatrixConfig`-Klassen existieren (Zeilen 67–80 und 188–202). Eine davon entfernen. |
-| QQ `allow_from`-Semantik klären | `nanobot/config/schema.py`, `nanobot/channels/qq.py` | Kommentar sagt "empty = public access", aber `BaseChannel.is_allowed()` behandelt leere Liste als Deny-All. Konsistenz herstellen. |
-| `tools_used` in Memory-Konsolidierung befüllen | `nanobot/agent/loop.py`, `nanobot/agent/memory.py` | `tools_used` wird in `_save_turn()` nie gesetzt – die Konsolidierung bekommt immer leere Tool-Listen. Aus `assistant.tool_calls` extrahieren. |
-| Ungenutzten `skill_names`-Parameter bereinigen | `nanobot/agent/context.py` | `skill_names` wird an `build_messages()` übergeben, dort aber nie verwendet. Entweder nutzen oder entfernen. |
-
-### 1.2 Testabdeckung erweitern
-
-| Bereich | Aktueller Stand | Ziel |
-|---------|----------------|------|
-| **Channels** | 2/10 getestet (Email, Matrix) | Mindestens Telegram, Discord, Slack, WhatsApp unit-testen |
-| **Provider** | Kein direkter Test | `LiteLLMProvider` Model-Resolution, `CustomProvider` Basis-Flow |
-| **Config** | Keine Tests | `load_config`, `save_config`, `_migrate_config`, Schema-Validierung |
-| **ChannelManager** | Kein Test | `_init_channels`, `_dispatch_outbound`, `_validate_allow_from` |
-| **BaseChannel** | Kein Test | `is_allowed()` für `"*"`, leere Liste, Pipe-getrennte IDs |
-
-### 1.3 Code-Konsistenz
-
-- [ ] Slack `_is_allowed()` an `BaseChannel.is_allowed()` angleichen oder dokumentierte Abweichung
-- [ ] Tool-Schema-Definitionen vereinheitlichen (manche nutzen Class-Attribute, andere `@property`)
-- [ ] Channel-Plugin-Registry statt hartcodierter Imports in `ChannelManager`
-
----
-
-## Phase 2 – Architektur-Verbesserungen (Mittelfristig)
-
-Fokus: Skalierbarkeit, Robustheit und Erweiterbarkeit verbessern.
-
-### 2.1 Session-Parallelität
-
-**Problem:** Ein einziger globaler `_processing_lock` verhindert parallele Nachrichtenverarbeitung über Sessions hinweg.
-
-**Lösung:** Pro-Session-Locks einführen, damit verschiedene Chats gleichzeitig verarbeitet werden können.
+Jede Abteilung der Firma wird durch spezialisierte Agenten repräsentiert, die eigenständig arbeiten, miteinander kommunizieren und als Team Aufgaben erledigen. Die Firma operiert autonom, braucht aber einen menschlichen "CEO" der die strategische Richtung vorgibt und Ergebnisse abnimmt.
 
 ```
-Vorher:  _processing_lock (global) → alle Sessions blockiert
-Nachher: _session_locks[session_id] → nur gleiche Session blockiert
+┌─────────────────────────────────────────────────────────┐
+│                    COMPANY IN A BOX                      │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐  │
+│  │ Geschäfts-│  │Engineering│  │Marketing │  │Support │  │
+│  │ führung   │  │          │  │ & Sales  │  │        │  │
+│  │          │  │ ┌──────┐ │  │ ┌──────┐ │  │┌──────┐│  │
+│  │  CEO-    │  │ │Back- │ │  │ │Content│ │  ││Kunden││  │
+│  │  Agent   │  │ │end   │ │  │ │Writer │ │  ││betreu││  │
+│  │          │  │ └──────┘ │  │ └──────┘ │  ││ung   ││  │
+│  │  CFO-    │  │ ┌──────┐ │  │ ┌──────┐ │  │└──────┘│  │
+│  │  Agent   │  │ │Front-│ │  │ │SEO    │ │  │┌──────┐│  │
+│  │          │  │ │end   │ │  │ │Analyst│ │  ││FAQ   ││  │
+│  └──────────┘  │ └──────┘ │  │ └──────┘ │  ││Bot   ││  │
+│                │ ┌──────┐ │  └──────────┘  │└──────┘│  │
+│                │ │DevOps│ │                 └────────┘  │
+│                │ └──────┘ │                             │
+│                └──────────┘                             │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │              Message Bus (Routing)               │    │
+│  └─────────────────────────────────────────────────┘    │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │ Shared   │  │ Cron &   │  │ Externe  │              │
+│  │ Memory   │  │ Heartbeat│  │ Channels │              │
+│  └──────────┘  └──────────┘  └──────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Token-Budgetierung im Kontext
+---
 
-**Problem:** Kein Token-Budgeting oder Truncation für langen Verlauf. Bei langen Konversationen können Token-Limits überschritten werden.
+## Fundament: Was nanobot heute kann
 
-**Lösung:**
-- Token-Schätzung für History, System-Prompt und User-Nachricht
-- Automatische Truncation älterer Nachrichten wenn Budget erschöpft
-- Konfigurierbare Limits pro Provider/Modell
+nanobot bringt bereits wichtige Bausteine mit:
 
-### 2.3 Shared Tool Factory
+| Baustein | Aktueller Stand | Rolle für Company-in-a-Box |
+|----------|----------------|---------------------------|
+| **AgentLoop** | Ein Agent, eine Schleife, Tool-Nutzung | Basis für jeden einzelnen Firmen-Agenten |
+| **SubagentManager** | Hintergrund-Tasks, Ergebnis-Rückmeldung | Vorläufer der Team-Delegation |
+| **MessageBus** | FIFO Inbound/Outbound-Queues | Erweiterbar zum internen Routing-Bus |
+| **Sessions** | `channel:chat_id`-basiert | Erweiterbar um Agent- und Team-Kontext |
+| **Skills** | Markdown-Dateien mit Fähigkeiten | Definieren Agenten-Rollen und Expertise |
+| **Bootstrap-Dateien** | SOUL.md, IDENTITY.md, AGENTS.md | Grundlage für individuelle Agenten-Persönlichkeiten |
+| **Cron/Heartbeat** | Zeitgesteuerte und proaktive Tasks | Autonomer Betrieb der Firma |
+| **Provider-Registry** | Viele LLM-Provider, auto-detection | Verschiedene Modelle für verschiedene Rollen |
+| **Channels** | Telegram, Discord, Slack, Email, etc. | Externe Schnittstelle der Firma |
 
-**Problem:** Tool-Registrierung wird in `loop.py` und `subagent.py` dupliziert.
-
-**Lösung:** Gemeinsame Factory-Funktion die Tool-Sets basierend auf Kontext (Hauptschleife vs. Subagent) erstellt.
-
-### 2.4 Konfigurationsverbesserungen
-
-- [ ] Config-Versionsfeld und robustere Migrationsstrategie
-- [ ] Optionale YAML/TOML-Unterstützung neben JSON
-- [ ] Provider-spezifische Validierung im Schema
-- [ ] Kanal-spezifische Prompt-Überschreibungen ermöglichen
-
-### 2.5 Skill-System härten
-
-- [ ] PyYAML statt manueller YAML-Frontmatter-Parsing (bricht bei verschachtelten Strukturen)
-- [ ] Skill-Metadata cachen statt bei jedem Aufruf neu einlesen
-- [ ] Skill-Abhängigkeiten zwischen Skills unterstützen
-- [ ] Per-Channel Skill-Konfiguration (bestimmte Skills nur für bestimmte Kanäle)
+**Was fehlt:**
+- Kein Multi-Agenten-Routing (alles geht an einen Agent)
+- Keine Agent-Identitäten oder Rollen
+- Keine Agent-zu-Agent-Kommunikation
+- Keine Team-Koordination (Delegation, Handoff, Eskalation)
+- Keine per-Agent Konfiguration (Modell, Provider, Workspace)
 
 ---
 
-## Phase 3 – Neue Features (Mittelfristig)
+## Phase 1 – Agenten-Identität & Multi-Agent-Grundlage
 
-Fokus: Aus der bestehenden Roadmap im README die wichtigsten Features umsetzen.
+> Ziel: Mehrere benannte Agenten mit eigenen Rollen, Persönlichkeiten und Konfigurationen betreiben.
 
-### 3.1 Streaming-Support
+### 1.1 Config-Schema erweitern
 
-**Beschreibung:** Aktuell werden Antworten erst nach vollständiger Generierung gesendet. Streaming würde die gefühlte Latenz deutlich reduzieren.
+**Aktuell:** Ein einziger `agents.defaults`-Block für alle.
 
-**Umfang:**
-- LLM-Response-Streaming in `loop.py`
-- Progressive Ausgabe über Channels die es unterstützen (Telegram Edit, Discord Edit, Slack Update)
-- Fallback auf Batch-Modus für Channels ohne Streaming-Support
+**Neu:** Benannte Agenten mit eigener Konfiguration.
 
-### 3.2 Erweiterte Suchwerkzeuge
+```json
+{
+  "company": {
+    "name": "Meine Firma GmbH",
+    "description": "KI-gestützte Softwareentwicklung"
+  },
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "temperature": 0.1
+    },
+    "team": {
+      "ceo": {
+        "model": "anthropic/claude-opus-4-5",
+        "role": "Geschäftsführer",
+        "department": "management",
+        "workspace": "~/.nanobot/company/management/ceo"
+      },
+      "backend-dev": {
+        "model": "anthropic/claude-sonnet-4-20250514",
+        "role": "Backend-Entwickler",
+        "department": "engineering",
+        "workspace": "~/.nanobot/company/engineering/backend"
+      },
+      "content-writer": {
+        "model": "openrouter/google/gemini-2.5-pro",
+        "role": "Content Writer",
+        "department": "marketing",
+        "workspace": "~/.nanobot/company/marketing/content"
+      }
+    }
+  }
+}
+```
 
-**Beschreibung:** Kein `grep_file` oder `search_in_files`-Tool vorhanden. Bei großen Workspaces fehlt die Möglichkeit, effizient nach Inhalten zu suchen.
+**Dateien:**
+- `nanobot/config/schema.py` – `AgentConfig` mit `role`, `department`, `workspace` pro Agent
+- `nanobot/config/loader.py` – Multi-Agent-Config laden
 
-**Neue Tools:**
-- `grep_file` – Regex-Suche in einzelnen Dateien
-- `search_files` – Rekursive Suche über Verzeichnisse
-- `find_files` – Dateinamen-basierte Suche mit Glob-Patterns
+### 1.2 Workspace pro Agent
 
-### 3.3 Multimodal-Erweiterung
+Jeder Agent bekommt eigene Bootstrap-Dateien:
 
-**Beschreibung:** Bilder werden bereits im Kontext unterstützt (base64), aber die Verarbeitung ist rudimentär.
+```
+~/.nanobot/company/
+├── shared/                          # Geteiltes Firmenwissen
+│   ├── COMPANY.md                   # Firmenbeschreibung, Werte, Ziele
+│   ├── PROCESSES.md                 # Firmenweite Prozesse
+│   ├── memory/
+│   │   ├── MEMORY.md                # Geteiltes Langzeitgedächtnis
+│   │   └── HISTORY.md               # Geteilte Historie
+│   └── skills/                      # Geteilte Skills
+│
+├── management/
+│   └── ceo/
+│       ├── SOUL.md                  # "Ich bin der CEO. Ich delegiere..."
+│       ├── IDENTITY.md              # Spezifische Identität
+│       ├── AGENTS.md                # Anweisungen für diesen Agenten
+│       ├── HEARTBEAT.md             # Proaktive CEO-Aufgaben
+│       └── memory/                  # Eigenes Gedächtnis
+│
+├── engineering/
+│   ├── backend/
+│   │   ├── SOUL.md                  # "Ich bin Backend-Entwickler..."
+│   │   ├── skills/                  # github, testing, deployment
+│   │   └── memory/
+│   └── frontend/
+│       ├── SOUL.md
+│       └── ...
+│
+├── marketing/
+│   └── content/
+│       ├── SOUL.md                  # "Ich schreibe überzeugende Texte..."
+│       └── ...
+│
+└── support/
+    └── customer/
+        ├── SOUL.md
+        └── ...
+```
 
-**Erweiterungen:**
-- Bild-Analyse und -Beschreibung als eingebaute Fähigkeit
-- Audio-Transkription über weitere Provider (nicht nur Groq)
-- Video-Zusammenfassungen (Frame-Extraktion + Beschreibung)
-- Datei-Uploads über alle Channels vereinheitlichen
+**Dateien:**
+- `nanobot/agent/context.py` – `ContextBuilder` mit `agent_root` Parameter; lädt sowohl `shared/` als auch agent-spezifische Bootstrap-Dateien
+- `nanobot/templates/` – Department-spezifische Templates
 
-### 3.4 Verbessertes Memory-System
+### 1.3 Mehrere AgentLoops
 
-**Beschreibung:** Das aktuelle zwei-Schichten-System (MEMORY.md + HISTORY.md) hat keine semantische Suche und keine Größenlimits.
+Statt eines einzigen `AgentLoop` laufen mehrere parallel:
 
-**Verbesserungen:**
-- Embedding-basierte Vektorsuche für relevante Erinnerungen
-- Automatische Zusammenfassung/Verdichtung von MEMORY.md ab einer Größenschwelle
-- Memory-Eviction-Policy für alte/irrelevante Einträge
-- Retry-Logik für Konsolidierungsfehler
+```
+CompanyRunner
+  ├── AgentLoop("ceo", bus, provider_opus, workspace_ceo)
+  ├── AgentLoop("backend-dev", bus, provider_sonnet, workspace_backend)
+  ├── AgentLoop("content-writer", bus, provider_gemini, workspace_content)
+  └── AgentLoop("support", bus, provider_sonnet, workspace_support)
+```
 
-### 3.5 Subagent-Verbesserungen
-
-- [ ] Progress-Updates während Subagent-Ausführung
-- [ ] Konfigurierbare Iterations-Limits (aktuell fest auf 15)
-- [ ] Optionaler MCP-Zugriff für Subagenten
-- [ ] Subagent-Memory für langfristige Hintergrundaufgaben
-
----
-
-## Phase 4 – Fortgeschrittene Features (Langfristig)
-
-Fokus: Differenzierende Fähigkeiten für fortgeschrittene Nutzung.
-
-### 4.1 Multi-Step Reasoning & Planung
-
-**Beschreibung:** Der Agent handelt aktuell reaktiv (eine Nachricht → eine Verarbeitung). Für komplexe Aufgaben fehlt vorausschauende Planung.
-
-**Ansätze:**
-- Chain-of-Thought-Prompting mit Planungsschritt vor Ausführung
-- Aufgabenzerlegung: Komplexe Anfragen in Teilschritte aufteilen
-- Reflexionsschritt: Nach Ausführung prüfen ob das Ziel erreicht wurde
-- Plan-Persistenz über Sitzungen hinweg
-
-### 4.2 Selbst-Verbesserung durch Feedback
-
-**Beschreibung:** Der Agent lernt nicht aus Fehlern oder Nutzerfeedback.
-
-**Ansätze:**
-- Feedback-Mechanismus: Nutzer kann Antworten bewerten
-- Fehleranalyse: Gescheiterte Tool-Aufrufe analysieren und Muster erkennen
-- Prompt-Anpassung: Basierend auf Feedback den System-Prompt personalisieren
-- Skill-Vorschläge: Basierend auf Nutzungsmustern neue Skills empfehlen
-
-### 4.3 Erweiterte Integrationen
-
-| Integration | Beschreibung |
-|-------------|--------------|
-| **Kalender** | Google Calendar / CalDAV-Integration für Terminverwaltung |
-| **Dateisystem-Watch** | Automatische Reaktion auf Dateiänderungen im Workspace |
-| **Git-Integration** | Nativer Git-Workflow (Commits, PRs, Code-Review) |
-| **Datenbank** | SQLite/PostgreSQL für strukturierte Datenspeicherung |
-| **Notifications** | Push-Benachrichtigungen über verschiedene Kanäle |
-
-### 4.4 Plugin-Architektur
-
-**Beschreibung:** Channels, Provider und Tools sind aktuell hartcodiert. Eine Plugin-Architektur würde die Erweiterbarkeit für die Community massiv verbessern.
-
-**Design:**
-- Registry-Pattern für Channels (analog zu Provider-Registry)
-- Plugin-Entdeckung über Entry-Points (`pyproject.toml`)
-- Standardisierte Schnittstellen mit Validierung
-- Plugin-Marketplace-Integration (ClawHub)
-
----
-
-## Priorisierungsmatrix
-
-| Aufgabe | Aufwand | Auswirkung | Priorität |
-|---------|---------|------------|-----------|
-| Schema-Fixes (1.1) | Niedrig | Mittel | **P0** |
-| Testabdeckung (1.2) | Mittel | Hoch | **P0** |
-| Code-Konsistenz (1.3) | Niedrig | Mittel | **P1** |
-| Session-Parallelität (2.1) | Mittel | Hoch | **P1** |
-| Token-Budgetierung (2.2) | Mittel | Hoch | **P1** |
-| Shared Tool Factory (2.3) | Niedrig | Mittel | **P1** |
-| Config-Verbesserungen (2.4) | Mittel | Mittel | **P2** |
-| Skill-System härten (2.5) | Mittel | Mittel | **P2** |
-| Streaming-Support (3.1) | Hoch | Hoch | **P1** |
-| Suchwerkzeuge (3.2) | Niedrig | Hoch | **P1** |
-| Multimodal (3.3) | Hoch | Hoch | **P2** |
-| Memory-Verbesserungen (3.4) | Hoch | Hoch | **P2** |
-| Subagent-Verbesserungen (3.5) | Mittel | Mittel | **P2** |
-| Multi-Step Reasoning (4.1) | Hoch | Hoch | **P3** |
-| Selbst-Verbesserung (4.2) | Hoch | Mittel | **P3** |
-| Erweiterte Integrationen (4.3) | Hoch | Mittel | **P3** |
-| Plugin-Architektur (4.4) | Hoch | Hoch | **P3** |
-
-**Legende:** P0 = Sofort, P1 = Nächste Iteration, P2 = Mittelfristig, P3 = Langfristig
+**Dateien:**
+- `nanobot/company/runner.py` – Neuer `CompanyRunner` der mehrere Agents startet
+- `nanobot/agent/loop.py` – `AgentLoop` bekommt `agent_id` und `agent_role`
+- `nanobot/cli/commands.py` – Neuer `nanobot company` CLI-Befehl
 
 ---
 
-## Technische Schulden
+## Phase 2 – Agent-zu-Agent-Kommunikation
 
-Folgende technische Schulden sollten parallel adressiert werden:
+> Ziel: Agenten können sich gegenseitig Aufgaben delegieren, Ergebnisse austauschen und koordiniert arbeiten.
 
-1. **Doppelte `MatrixConfig`** in `config/schema.py` – Zeile 67–80 ist redundant
-2. **`tools_used` nie befüllt** – `memory.py` bekommt immer leere Tool-Listen bei der Konsolidierung
-3. **Skill-YAML-Parsing fragil** – Manuelles Parsing bricht bei verschachtelten Strukturen oder Doppelpunkten in Werten
-4. **Tool-Ergebnis-Trunkierung fest auf 500 Zeichen** – Sollte konfigurierbar sein
-5. **Subagent Tool-Registrierung dupliziert** – Gemeinsame Factory fehlt
-6. **Kein `process_direct()` mit `channels_config`** – Direkte Verarbeitung ignoriert Kanal-Konfiguration
-7. **Channel-Manager hartcodiert** – Kein Registry/Plugin-Pattern für Channels
+### 2.1 Message Bus erweitern
+
+**Aktuell:** Zwei FIFO-Queues (Inbound/Outbound), ein Consumer.
+
+**Neu:** Routing nach `target_agent_id` mit internem Agent-Channel.
+
+```python
+@dataclass
+class InboundMessage:
+    channel: str              # "telegram", "agent", "system"
+    sender_id: str            # User-ID oder Agent-ID
+    chat_id: str
+    content: str
+    target_agent_id: str = "" # Routing: welcher Agent soll antworten?
+    message_type: str = ""    # "task", "result", "handoff", "broadcast"
+    task_id: str = ""         # Für Tracking von delegierten Aufgaben
+    priority: int = 0         # Höher = wichtiger
+    media: list = field(default_factory=list)
+    metadata: dict = field(default_factory=dict)
+```
+
+**Routing-Logik:**
+1. Nachricht mit `target_agent_id` → direkt an diesen Agent
+2. Nachricht ohne `target_agent_id` → an den Router-Agent (CEO) oder regelbasiert
+3. `channel="agent"` → interne Agent-zu-Agent-Nachricht
+4. `message_type="broadcast"` → an alle Agenten
+
+**Dateien:**
+- `nanobot/bus/events.py` – Erweiterte Message-Typen
+- `nanobot/bus/router.py` – Neuer Message-Router mit Routing-Regeln
+- `nanobot/bus/bus.py` – Multi-Consumer-Support
+
+### 2.2 Delegate-Tool
+
+Neues Tool mit dem Agenten Aufgaben an andere Agenten delegieren können:
+
+```
+delegate_to(
+    agent_id: str,           # "backend-dev"
+    task: str,               # "Implementiere die REST-API für User-Management"
+    priority: str = "normal", # "low", "normal", "high", "urgent"
+    wait_for_result: bool = false
+)
+```
+
+**Workflow:**
+```
+CEO empfängt Anfrage: "Baue eine Landing Page"
+  → CEO analysiert und delegiert:
+    delegate_to("content-writer", "Schreibe Texte für Landing Page")
+    delegate_to("backend-dev", "Erstelle HTML/CSS Template")
+  → Content-Writer liefert Texte
+  → Backend-Dev baut Template mit Texten
+  → CEO prüft und liefert Ergebnis an den Menschen
+```
+
+**Dateien:**
+- `nanobot/agent/tools/delegate.py` – Neues `DelegateTool`
+- `nanobot/agent/loop.py` – Ergebnisse von delegierten Tasks verarbeiten
+
+### 2.3 Koordinationsprotokolle
+
+Strukturierte Kommunikation zwischen Agenten:
+
+| Protokoll | Beschreibung | Beispiel |
+|-----------|-------------|----------|
+| **Delegation** | Agent A gibt Aufgabe an Agent B | CEO → Backend-Dev: "Implementiere Feature X" |
+| **Ergebnis** | Agent B meldet Ergebnis an Agent A | Backend-Dev → CEO: "Feature X implementiert, PR #42" |
+| **Handoff** | Agent A übergibt Kontext an Agent B | Support → Engineering: "Bug Report mit Details" |
+| **Eskalation** | Agent B eskaliert an übergeordneten Agent | Backend-Dev → CEO: "Brauche Budget-Freigabe" |
+| **Broadcast** | Agent A informiert alle | CEO → Alle: "Neue Firmenstrategie" |
+| **Review** | Agent A bittet Agent B um Prüfung | Backend-Dev → QA: "Bitte Code-Review" |
 
 ---
 
-## Metriken & Erfolgskriterien
+## Phase 3 – Team-Koordination & Autonomer Betrieb
 
-| Metrik | Aktuell | Ziel (Phase 1) | Ziel (Phase 2) |
-|--------|---------|-----------------|-----------------|
-| Testabdeckung (Channels) | 2/10 | 6/10 | 10/10 |
-| Testabdeckung (Provider) | 0 | 2 | Alle |
-| Config-Tests | 0 | Basis-Suite | Vollständig |
-| Kerncode-Zeilen | ~3.935 | <4.200 | <4.500 |
-| Offene Bugs (bekannt) | ~7 | 0 | 0 |
-| Antwort-Latenz (gefühlt) | Batch | Batch | Streaming |
+> Ziel: Die Firma operiert eigenständig mit Meetings, Workflows und proaktivem Handeln.
+
+### 3.1 Team-Meetings (Cron-gesteuert)
+
+Automatische Koordinations-Meetings über das Cron-System:
+
+```json
+{
+  "company_cron": {
+    "daily_standup": {
+      "schedule": "0 9 * * *",
+      "type": "team_meeting",
+      "participants": ["ceo", "backend-dev", "content-writer"],
+      "agenda": "Status-Update, Blocker, Tagesplanung"
+    },
+    "weekly_review": {
+      "schedule": "0 17 * * 5",
+      "type": "team_meeting",
+      "participants": ["ceo", "cfo"],
+      "agenda": "Wochenrückblick, KPIs, Budget"
+    }
+  }
+}
+```
+
+**Ablauf eines Daily Standups:**
+1. Cron triggert Meeting
+2. Jeder Agent wird nach Status gefragt
+3. CEO sammelt, priorisiert und verteilt Aufgaben
+4. Ergebnis wird als Meeting-Protokoll gespeichert
+5. Optional: Zusammenfassung an den Menschen via bevorzugtem Channel
+
+**Dateien:**
+- `nanobot/company/meetings.py` – Meeting-Koordination
+- `nanobot/cron/service.py` – Erweitert um `team_meeting`-Typ
+
+### 3.2 Workflow-Engine
+
+Definierbare Geschäftsprozesse als Workflows:
+
+```yaml
+# workflows/feature-development.yml
+name: Feature-Entwicklung
+trigger: delegation_from_ceo
+steps:
+  - agent: backend-dev
+    task: "Implementierung"
+    output: code_branch
+  - agent: qa-agent
+    task: "Code Review & Tests"
+    input: code_branch
+    output: review_result
+  - agent: backend-dev
+    task: "Review-Feedback einarbeiten"
+    condition: "review_result.approved == false"
+  - agent: ceo
+    task: "Finale Abnahme"
+    output: approved
+```
+
+**Dateien:**
+- `nanobot/company/workflows.py` – Workflow-Definition und -Ausführung
+- `nanobot/company/templates/` – Vordefinierte Workflow-Templates
+
+### 3.3 Per-Agent Heartbeat
+
+Jeder Agent hat eigene proaktive Aufgaben:
+
+| Agent | Heartbeat-Aufgaben |
+|-------|-------------------|
+| **CEO** | Offene Delegationen prüfen, Eskalationen bearbeiten, Tagesbericht |
+| **Backend-Dev** | Build-Status prüfen, Dependencies updaten, Tech-Debt tracken |
+| **Content-Writer** | SEO-Rankings prüfen, Content-Kalender aktualisieren |
+| **Support** | Offene Tickets prüfen, FAQ aktualisieren |
+| **CFO** | Kosten-Tracking (API-Kosten, Token-Verbrauch), Budget-Warnungen |
+
+**Dateien:**
+- `nanobot/heartbeat/service.py` – Per-Agent-Heartbeat statt globalem
+- Jeder Agent-Workspace hat eigene `HEARTBEAT.md`
+
+### 3.4 Geteiltes und privates Gedächtnis
+
+```
+Gedächtnis-Hierarchie:
+├── Firmen-Gedächtnis (shared/)     → Alle Agenten lesen/schreiben
+│   ├── COMPANY_MEMORY.md           → Firmenwissen, Entscheidungen
+│   └── COMPANY_HISTORY.md          → Firmen-Historie
+├── Team-Gedächtnis (department/)   → Nur Team-Mitglieder
+│   └── TEAM_MEMORY.md              → Team-spezifisches Wissen
+└── Agent-Gedächtnis (agent/)       → Nur dieser Agent
+    ├── MEMORY.md                   → Persönliches Wissen
+    └── HISTORY.md                  → Persönliche Historie
+```
+
+**Dateien:**
+- `nanobot/agent/memory.py` – Drei-Ebenen-Gedächtnis
+- `nanobot/agent/context.py` – Alle Ebenen in den Kontext laden
 
 ---
 
-## Nächste Schritte
+## Phase 4 – Externe Schnittstellen & Skalierung
 
-1. **Sofort:** Schema-Fixes aus 1.1 umsetzen (niedrigster Aufwand, sofortiger Nutzen)
-2. **Diese Woche:** Test-Infrastruktur für Channels und Config aufbauen
-3. **Nächste Iteration:** Session-Parallelität und Token-Budgetierung angehen
-4. **Fortlaufend:** Technische Schulden bei jeder Feature-Arbeit mit adressieren
+> Ziel: Die Firma interagiert mit der Außenwelt und kann ihre Kapazität anpassen.
+
+### 4.1 Intelligentes Channel-Routing
+
+Externe Nachrichten werden zum richtigen Agenten geroutet:
+
+| Quelle | Routing |
+|--------|---------|
+| Email an support@firma.de | → Support-Agent |
+| Telegram-Nachricht vom CEO | → CEO-Agent |
+| Discord #engineering Channel | → Engineering-Team |
+| Slack DM | → CEO-Agent (Standardroute) |
+| Email an bewerbung@firma.de | → HR-Agent |
+
+**Regeln im Config:**
+```json
+{
+  "routing": {
+    "rules": [
+      { "channel": "email", "match": "support@", "target": "support" },
+      { "channel": "telegram", "from": "CEO_USER_ID", "target": "ceo" },
+      { "channel": "discord", "room": "engineering", "target": "backend-dev" },
+      { "default": "ceo" }
+    ]
+  }
+}
+```
+
+**Dateien:**
+- `nanobot/company/routing.py` – Regelbasiertes Routing
+- `nanobot/bus/router.py` – Erweitert um externe Channel-Regeln
+
+### 4.2 Firmen-Dashboard
+
+Ein Web-Dashboard das den Firmenstatus zeigt:
+
+- Agenten-Status (aktiv, idle, beschäftigt)
+- Laufende Aufgaben und Delegationen
+- Meeting-Protokolle
+- Kosten-Übersicht (Token, API-Calls)
+- Chat-Interface zum direkten Kontakt mit jedem Agenten
+- Workflow-Fortschritt
+
+**Dateien:**
+- `nanobot/company/dashboard/` – Einfaches Web-UI (FastAPI + HTMX)
+
+### 4.3 Kosten-Management
+
+Der CFO-Agent trackt und optimiert Kosten:
+
+```
+Kosten-Tracking:
+├── Token-Verbrauch pro Agent/Tag/Aufgabe
+├── API-Kosten pro Provider
+├── Kosten pro Workflow/Projekt
+├── Budget-Limits und Warnungen
+└── Modell-Empfehlungen (günstigeres Modell wenn möglich)
+```
+
+**Strategie:** Einfache Aufgaben → günstiges Modell (z.B. Haiku), komplexe Aufgaben → starkes Modell (z.B. Opus).
+
+### 4.4 Dynamische Team-Skalierung
+
+Agenten können bei Bedarf gespawnt oder pausiert werden:
+
+- CEO erkennt hohe Last → spawnt temporären Agenten
+- Kein Support-Bedarf nachts → Support-Agent pausiert
+- Großes Projekt → temporäres Projekt-Team wird zusammengestellt
+- Budget-Limit erreicht → nicht-kritische Agenten pausieren
+
+---
+
+## Phase 5 – Fortgeschrittene Fähigkeiten
+
+> Ziel: Die Firma lernt, verbessert sich und handelt strategisch.
+
+### 5.1 Firmenweites Lernen
+
+- **Post-Mortems:** Nach gescheiterten Aufgaben analysiert das Team warum und aktualisiert Prozesse
+- **Best Practices:** Erfolgreiche Muster werden in Skills extrahiert
+- **Onboarding:** Neue Agenten lernen aus dem Firmen-Gedächtnis
+- **Performance-Reviews:** CEO bewertet Agenten-Leistung und passt Prompts/Skills an
+
+### 5.2 Strategische Planung
+
+- CEO erstellt Quartals-/Monatspläne
+- Ziele werden in Aufgaben zerlegt und auf Teams verteilt
+- Fortschritt wird automatisch getrackt
+- Abweichungen werden eskaliert
+
+### 5.3 Externe Integrationen
+
+| Integration | Agent | Zweck |
+|-------------|-------|-------|
+| GitHub/GitLab | Engineering | Code, PRs, Issues |
+| Google Calendar | Alle | Termine, Deadlines |
+| Notion/Wiki | Content | Dokumentation |
+| Stripe/Billing | CFO | Finanzen |
+| CRM (HubSpot etc.) | Sales/Support | Kundenverwaltung |
+| Analytics | Marketing | Web-Analyse |
+
+---
+
+## Implementierungs-Roadmap
+
+### Meilenstein 1: Multi-Agent-Grundlage (Phase 1)
+
+```
+Woche 1-2:
+  ├── Config-Schema für benannte Agenten erweitern
+  ├── Per-Agent Workspace-Struktur anlegen
+  └── ContextBuilder für Agent-spezifische Bootstrap-Dateien
+
+Woche 3-4:
+  ├── CompanyRunner: Mehrere AgentLoops parallel starten
+  ├── CLI: `nanobot company start`
+  └── Erste zwei Agenten (CEO + ein Spezialist) laufen parallel
+```
+
+**Ergebnis:** Zwei unabhängige Agenten mit eigenen Persönlichkeiten laufen auf einer Maschine.
+
+### Meilenstein 2: Kommunikation (Phase 2)
+
+```
+Woche 5-6:
+  ├── Message Bus um Routing-Felder erweitern
+  ├── DelegateTool implementieren
+  └── Agent-zu-Agent Nachrichten funktionieren
+
+Woche 7-8:
+  ├── Koordinationsprotokolle (Delegation, Ergebnis, Handoff)
+  ├── Task-Tracking (wer hat was an wen delegiert?)
+  └── CEO kann Aufgaben verteilen und Ergebnisse sammeln
+```
+
+**Ergebnis:** CEO delegiert Aufgaben an Spezialisten, bekommt Ergebnisse zurück.
+
+### Meilenstein 3: Autonomer Betrieb (Phase 3)
+
+```
+Woche 9-10:
+  ├── Per-Agent Heartbeat
+  ├── Team-Meetings via Cron
+  └── Drei-Ebenen-Gedächtnis (Firma, Team, Agent)
+
+Woche 11-12:
+  ├── Workflow-Engine (einfache sequenzielle Workflows)
+  ├── Eskalations-Mechanismus
+  └── Die Firma läuft autonom mit regelmäßigen Check-ins
+```
+
+**Ergebnis:** Die Firma operiert eigenständig, hält Meetings und führt Workflows aus.
+
+### Meilenstein 4: Externe Welt (Phase 4)
+
+```
+Woche 13-16:
+  ├── Intelligentes Channel-Routing
+  ├── Firmen-Dashboard (Web-UI)
+  ├── Kosten-Tracking und -Management
+  └── Dynamische Team-Skalierung
+```
+
+**Ergebnis:** Die Firma hat externe Schnittstellen, ein Dashboard und Kosten-Kontrolle.
+
+### Meilenstein 5: Intelligenz (Phase 5)
+
+```
+Woche 17+:
+  ├── Firmenweites Lernen
+  ├── Strategische Planung
+  └── Externe Integrationen
+```
+
+**Ergebnis:** Die Firma lernt, plant strategisch und ist in externe Systeme integriert.
+
+---
+
+## Technische Architektur
+
+### Kern-Komponenten
+
+```
+nanobot/
+├── company/                    # NEU: Company-in-a-Box Kern
+│   ├── runner.py               # CompanyRunner: startet alle Agenten
+│   ├── routing.py              # Nachrichtenrouting zwischen Agenten
+│   ├── meetings.py             # Team-Meetings und Standups
+│   ├── workflows.py            # Workflow-Engine
+│   ├── dashboard/              # Web-Dashboard
+│   └── templates/              # Firmen-Templates
+│
+├── agent/                      # Erweitert
+│   ├── loop.py                 # + agent_id, agent_role
+│   ├── context.py              # + agent_root, shared_root
+│   ├── memory.py               # + Drei-Ebenen-Gedächtnis
+│   └── tools/
+│       ├── delegate.py         # NEU: DelegateTool
+│       └── team.py             # NEU: TeamTool (Status, Mitglieder)
+│
+├── bus/                        # Erweitert
+│   ├── events.py               # + target_agent_id, message_type, task_id
+│   ├── bus.py                  # + Multi-Consumer-Support
+│   └── router.py               # NEU: Message-Router
+│
+├── config/                     # Erweitert
+│   └── schema.py               # + company, agents.team, routing
+│
+└── cli/                        # Erweitert
+    └── commands.py             # + nanobot company [start|status|meeting]
+```
+
+### Datenfluss
+
+```
+Externe Nachricht (z.B. Telegram)
+    │
+    ▼
+ChannelManager → MessageBus (Inbound)
+    │
+    ▼
+Router (routing.py)
+    ├── Regel: "Telegram CEO_ID" → CEO-Agent
+    ├── Regel: "Email support@" → Support-Agent
+    └── Default → CEO-Agent
+    │
+    ▼
+AgentLoop (z.B. CEO)
+    │
+    ├── Direkt antworten → MessageBus (Outbound) → Channel
+    │
+    └── Delegieren → DelegateTool
+         │
+         ▼
+    MessageBus (Inbound, channel="agent")
+         │
+         ▼
+    Router → Ziel-Agent (z.B. Backend-Dev)
+         │
+         ▼
+    AgentLoop (Backend-Dev)
+         │
+         └── Ergebnis → MessageBus → Router → CEO
+```
+
+---
+
+## Beispiel-Szenario: "Baue mir eine Landing Page"
+
+```
+1. Mensch (via Telegram) → CEO-Agent:
+   "Wir brauchen eine Landing Page für unser neues Produkt"
+
+2. CEO-Agent analysiert:
+   → delegate_to("content-writer", "Schreibe überzeugende Texte für
+      eine Produktseite. Produkt: [Details]. Zielgruppe: [Details]")
+   → delegate_to("backend-dev", "Erstelle HTML/CSS-Template für
+      eine Landing Page. Warte auf Texte vom Content-Writer.")
+
+3. Content-Writer liefert Ergebnis:
+   → result_to("ceo", "Texte fertig: [Headline, Subtext, CTA, Features]")
+
+4. CEO leitet Texte weiter:
+   → delegate_to("backend-dev", "Hier sind die Texte: [...]
+      Bitte ins Template einbauen.")
+
+5. Backend-Dev liefert:
+   → result_to("ceo", "Landing Page fertig. Dateien unter /output/landing/")
+
+6. CEO prüft und antwortet dem Menschen:
+   "Die Landing Page ist fertig! Dateien liegen unter /output/landing/.
+    - Responsive Design ✓
+    - SEO-optimierte Texte ✓
+    - Call-to-Action ✓"
+```
+
+---
+
+## Beispiel-Agenten-Profile
+
+### CEO-Agent (SOUL.md)
+
+```markdown
+# Soul
+
+Ich bin der CEO der Firma. Ich delegiere, koordiniere und stelle sicher,
+dass Aufgaben erledigt werden.
+
+## Verhalten
+- Ich löse Aufgaben NICHT selbst, sondern delegiere an Spezialisten
+- Ich zerlege komplexe Anfragen in klare Teilaufgaben
+- Ich prüfe Ergebnisse bevor ich sie an den Menschen weiterleite
+- Ich eskaliere wenn Agenten nicht liefern können
+
+## Mein Team
+- backend-dev: Programmierung, APIs, Infrastruktur
+- content-writer: Texte, Marketing-Material, SEO
+- support: Kundenfragen, FAQ, Problemlösung
+```
+
+### Backend-Entwickler-Agent (SOUL.md)
+
+```markdown
+# Soul
+
+Ich bin ein erfahrener Backend-Entwickler. Ich schreibe sauberen,
+getesteten Code und baue robuste Systeme.
+
+## Verhalten
+- Ich schreibe Code mit Tests
+- Ich dokumentiere APIs und Architektur-Entscheidungen
+- Ich frage nach wenn Anforderungen unklar sind (Eskalation an CEO)
+- Ich bevorzuge einfache, wartbare Lösungen
+```
+
+---
+
+## Kostenabschätzung (Token-Verbrauch)
+
+| Szenario | Geschätzte Kosten/Tag |
+|----------|----------------------|
+| Idle (nur Heartbeats, 4 Agenten) | ~$0.50 |
+| Leichter Betrieb (5-10 Aufgaben) | ~$2-5 |
+| Normaler Betrieb (20-30 Aufgaben) | ~$10-20 |
+| Intensiver Betrieb (50+ Aufgaben) | ~$30-50 |
+
+**Optimierung:** CFO-Agent überwacht Kosten und empfiehlt günstigere Modelle für einfache Tasks.
+
+---
+
+## Erste Schritte (Sofort umsetzbar)
+
+1. **Config-Schema erweitern** – `AgentConfig` mit `role`, `department`, `workspace`
+2. **Zwei Agent-Workspaces anlegen** – CEO + ein Spezialist mit eigenen SOUL.md
+3. **CompanyRunner schreiben** – Startet zwei `AgentLoop`-Instanzen parallel
+4. **DelegateTool implementieren** – CEO kann an Spezialist delegieren
+5. **CLI-Befehl** – `nanobot company start` startet die Firma
+
+---
+
+## Offene Fragen
+
+- **Modell-Mix:** Soll jeder Agent sein eigenes Modell/Provider haben, oder alle das gleiche?
+- **Kosten-Limit:** Gibt es ein tägliches Budget-Limit?
+- **Channels:** Welche externen Channels soll die Firma nutzen?
+- **Abteilungen:** Welche Abteilungen braucht die Firma initial?
+- **Autonomie-Level:** Wie viel soll die Firma eigenständig entscheiden vs. nachfragen?
